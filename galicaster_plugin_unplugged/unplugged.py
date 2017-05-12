@@ -5,12 +5,12 @@ import time
 
 from datetime import datetime
 from email.mime.text import MIMEText
+from pulsectl import Pulse
 
 from galicaster.core import context
-from galicaster.recorder.service import RECORDING_STATUS
 
 gi.require_version('GUdev', '1.0')
-from gi.repository import GUdev # noqa
+from gi.repository import GLib, GUdev # noqa
 
 
 conf = context.get_conf()
@@ -18,6 +18,7 @@ dispatcher = context.get_dispatcher()
 logger = context.get_logger()
 recorder = context.get_recorder()
 
+pulse = Pulse('galicaster-plugin-unplugged')
 udev = GUdev.Client(subsystems=['usb'])
 
 
@@ -30,6 +31,8 @@ class WatchedDevice(object):
         self.name = device_name
         self.vendor_id = device_info.get('vendor_id')
         self.device_id = device_info.get('device_id')
+        self.switch_on_connect = device_info.get('switch_on_connect')
+        self.switch_on_disconnect = device_info.get('switch_on_disconnect')
         self._unplugged_since = False
         self.plugged_in
 
@@ -60,6 +63,8 @@ class WatchedDevice(object):
     def __repr__(self):
         return ('<WatchedDevice: name="{0.name}", vendor_id="{0.vendor_id}", '
                 'device_id="{0.device_id}", plugged_in={0.plugged_in}, '
+                'switch_on_connect="{0.switch_on_connect}", '
+                'switch_on_disconnect="{0.switch_on_disconnect}", '
                 'unplugged_since="{0.unplugged_since}">'.format(self))
 
 
@@ -69,6 +74,8 @@ class Unplugged(object):
         # resend_every = how many minutes to resend email if still unplugged
         self.resend_every = conf.get_int('unplugged', 'resend_every', 60) * 60
         self.resend_every -= 3  # just to make sure ;)
+
+        self.switch = {}
 
         self.last_check = time.time()
 
@@ -111,16 +118,38 @@ class Unplugged(object):
         msg['To'] = to
         msg['From'] = fr
         msg['Subject'] = '[{0}] {1.name} {1.status}'.format(host, device)
-        s = smtplib.SMTP(smtpserver)
-        s.sendmail(fr, to.split(','), msg.as_string())
-        s.quit()
+
+        s = None
+        try:
+            s = smtplib.SMTP(smtpserver)
+            s.sendmail(fr, to.split(','), msg.as_string())
+        except Exception:
+            logger.error('problem sending email', exc_info=True)
+        finally:
+            if s:
+                s.quit()
 
         logger.debug('sent "{0.status}" email for "{0.name}"'.format(device))
+
+    def switch_input(self, switch_to, device=None):
+        logger.info('switching pulse input to {}'.format(switch_to))
+        for source in pulse.source_list():
+            if source.name == switch_to:
+                for recording in pulse.source_output_list():
+                    if (pulse.client_info(recording.client).name
+                            == 'run_galicaster.py'):
+                        pulse.source_output_move(recording.index, source.index)
+                        if device:
+                            self.switch[device.name] = None
+                        return False
+        logger.warning('could not switch to {}'.format(switch_to))
+        return True
 
     def translate_action(self, action):
         return {'add': 'plugged in', 'remove': 'unplugged'}.get(action)
 
     def _handle_timer(self, sender):
+        # resend notification emails if still unplugged
         now = time.time()
         if self.last_check < now - self.resend_every:
             self.last_check = now
@@ -134,3 +163,13 @@ class Unplugged(object):
                     device.get_property('ID_MODEL_ID') == d.device_id):
                 logger.info("%s was %s", d.name, self.translate_action(action))
                 self.send_email(d)
+                switch_to = {'add': d.switch_on_connect,
+                             'remove': d.switch_on_disconnect}.get(action)
+
+                if ((action == 'add' and d.switch_on_connect) or
+                        (action == 'remove' and d.switch_on_disconnect)):
+                    if self.switch.get(d.name):
+                        GLib.source_remove(self.switch.get(d.name))
+                        self.switch[d.name] = None
+                    self.switch[d.name] = GLib.timeout_add_seconds(
+                                    1, self.switch_input, switch_to, d)
