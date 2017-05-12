@@ -79,15 +79,23 @@ class Unplugged(object):
 
         self.last_check = time.time()
 
-        # devices to watch, can be multiple, inthe form:
+        # devices to watch, can be multiple, in the form:
         # {'display name': {'vendor_id': '0a1b', device_id: '3c4d'}}
         devices_conf = conf.get_json('unplugged', 'devices')
         self.devices = []
         for d in devices_conf:
             dev = WatchedDevice(d, devices_conf[d])
-            # senf email immediately if unplugged on startup
+            switch_to = dev.switch_on_connect
+            # send email immediately if unplugged on startup
             if not dev.plugged_in:
                 self.send_email(dev)
+                switch_to = dev.switch_on_disconnect
+
+            # switch pulse input on startup as required
+            if switch_to:
+                self.switch[dev.name] = GLib.timeout_add_seconds(
+                                        1, self.switch_input, switch_to, dev)
+
             self.devices.append(dev)
             logger.debug("watching: {}".format(dev))
 
