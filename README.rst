@@ -16,8 +16,8 @@ Installation
 ------------
 
 Install using ``sudo pip2 install .`` in this directory. The plugin depends on
-the ``pulsectl`` python module, and it should be installed automatically by
-pip as needed.
+the pulsectl_ python module, and it should be installed automatically by pip
+as needed.
 
 You can also install manually by copying ``galicaster_plugin_unplugged/`` into
 the Galicaster plugins directory, renaming it as ``unplugged/`` and then
@@ -101,3 +101,4 @@ Source code is available at https://github.com/ppettit/galicaster-plugin-unplugg
 
 .. _Galicaster: https://github.com/teltek/Galicaster
 .. _Pulseaudio: https://www.freedesktop.org/wiki/Software/PulseAudio/
+.. _pulsectl:   https://pypi.python.org/pypi/pulsectl
